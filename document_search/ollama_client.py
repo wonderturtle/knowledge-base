@@ -14,10 +14,12 @@ def get_installed_models(base_url, timeout=5):
     """
     url = f"{base_url.rstrip('/')}/api/tags"
     try:
-        resp = requests.get(url, timeout=timeout)
+        resp = requests.get(url, timeout=(5, timeout))
         resp.raise_for_status()
         data = resp.json()
         models = data.get("models", [])
+        if not isinstance(models, list) or any(not isinstance(m, dict) or not isinstance(m.get("name"), str) for m in models):
+            return None, "Ollama returned an invalid model list."
         return models, None
     except ConnectionError:
         return None, (
@@ -37,6 +39,8 @@ def call_chat_completion(base_url, model, messages, timeout=60):
 
     Returns (answer_content, error_str).
     """
+    if model and "cloud" in model.lower():
+        return None, "Choose an installed on-device Ollama model; cloud models are disabled in this app."
     if not model or not model.strip():
         return None, (
             "No Ollama model configured. Please set OLLAMA_MODEL in .env "
@@ -48,15 +52,16 @@ def call_chat_completion(base_url, model, messages, timeout=60):
         "model": model,
         "messages": messages,
         "stream": False,
+        "options": {"num_predict": 512},
     }
 
     try:
-        resp = requests.post(url, json=payload, timeout=timeout)
+        resp = requests.post(url, json=payload, timeout=(5, timeout))
         resp.raise_for_status()
         data = resp.json()
         message = data.get("message", {})
         content = message.get("content", "")
-        if not content:
+        if not isinstance(content, str) or not content:
             return None, "Ollama returned an empty response."
         return content, None
     except ConnectionError:
@@ -76,6 +81,21 @@ def call_chat_completion(base_url, model, messages, timeout=60):
         return None, f"Ollama server error (HTTP {status}): {error_detail or e}"
     except Exception as e:
         return None, f"Ollama request failed: {e}"
+
+
+def bounded_history(history, character_budget=4000):
+    """Keep complete recent exchanges within a small model-input budget."""
+    result = []
+    used = 0
+    turns = (history or [])[-6:]
+    for index in range(len(turns) - 2, -1, -2):
+        pair = turns[index:index + 2]
+        size = sum(len(turn["content"]) for turn in pair)
+        if used + size > character_budget:
+            break
+        result = pair + result
+        used += size
+    return [{"role": turn["role"], "content": turn["content"]} for turn in result]
 
 
 def build_grounded_messages(question, passages, history=None):
@@ -112,7 +132,7 @@ def build_grounded_messages(question, passages, history=None):
 
     # Include short prior conversation history if provided
     if history:
-        for turn in history[-6:]:  # Keep last 3 exchanges (6 messages max)
+        for turn in bounded_history(history):
             messages.append({"role": turn["role"], "content": turn["content"]})
 
     user_content = (

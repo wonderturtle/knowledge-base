@@ -27,6 +27,7 @@ from ..services import (
     insert_passages,
     split_into_passages,
     update_document_status,
+    stored_sections,
 )
 
 documents_bp = Blueprint("documents", __name__, url_prefix="/documents")
@@ -112,11 +113,11 @@ def upload():
 
     # Build full structured extracted text with page/section headers
     full_text = ""
-    for key in sorted(sections.keys(), key=lambda k: (isinstance(k, str), k)):
+    for key in sections:
         label = f"page {key}" if isinstance(key, int) else str(key)
         full_text += f"=== [{label}] ===\n{sections[key]}\n\n"
 
-    status = "pending" if full_text.strip() else "empty"
+    status = "pending" if any(value.strip() for value in sections.values()) else "empty"
     doc_id = insert_document(
         original_name=original_name,
         storage_name=storage_name,
@@ -127,6 +128,7 @@ def upload():
         page_count=page_count,
         parser_used=parser_name,
         extraction_warnings=warnings,
+        sections=sections,
     )
 
     for w in warnings:
@@ -166,8 +168,7 @@ def index_doc(document_id):
         flash("Document is already indexed.", "info")
         return redirect(url_for("documents.parsed", document_id=document_id))
 
-    filepath = os.path.join(current_app.config["UPLOAD_FOLDER"], doc.storage_name)
-    sections, _, _, _ = extract_text(filepath, doc.file_type)
+    sections = stored_sections(doc)
 
     if not sections:
         flash("No text could be extracted to index.", "error")
@@ -175,7 +176,11 @@ def index_doc(document_id):
         return redirect(url_for("documents.parsed", document_id=document_id))
 
     tokenizer = get_tokenizer()
-    passages = split_into_passages(sections, doc.file_type, tokenizer)
+    try:
+        passages = split_into_passages(sections, doc.file_type, tokenizer)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("documents.parsed", document_id=document_id))
 
     if not passages:
         flash("No passages could be generated from the extracted text.", "error")
@@ -187,7 +192,8 @@ def index_doc(document_id):
         flash(error_msg, "error")
         return redirect(url_for("documents.parsed", document_id=document_id))
 
-    update_document_status(document_id, "indexed")
+    if get_embedding_error():
+        flash("Keyword indexing completed; semantic search unavailable: " + get_embedding_error(), "warning")
     flash(
         f"Document successfully indexed into {len(passages)} passages.",
         "success",

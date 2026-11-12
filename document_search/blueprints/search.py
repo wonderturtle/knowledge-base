@@ -60,13 +60,17 @@ def index():
         # If user asked Ollama via POST
         if is_ask_action:
             # Select passages based on user's chosen retrieval method
-            if retrieval_method == "semantic" and not semantic_error:
+            if retrieval_method == "semantic" and semantic_error:
+                ollama_error = "Semantic retrieval unavailable. Choose keyword retrieval explicitly to ask Ollama."
+            if retrieval_method == "semantic":
                 retrieved_for_model = semantic_results
             else:
                 retrieved_for_model = keyword_results
                 retrieval_method = "keyword"
 
-            if not retrieved_for_model:
+            if ollama_error:
+                pass
+            elif not retrieved_for_model:
                 ollama_answer = "No evidence found in uploaded documents for this query. No passages were retrieved."
             elif not ollama_model:
                 ollama_error = "No Ollama model configured. Please set OLLAMA_MODEL in .env."

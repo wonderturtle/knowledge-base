@@ -8,11 +8,12 @@
 </head>
 <body>
     <nav class="navbar">
-        <a href="{{ url_for('documents.index') }}" class="nav-brand">📚 Document Search &amp; RAG Lab</a>
+        <a href="{{ url_for('documents.index') }}" class="nav-brand"> Document Search &amp; RAG Lab</a>
         <div class="nav-links">
             <a href="{{ url_for('documents.index') }}">Documents</a>
             <a href="{{ url_for('search.index') }}">Search</a>
             <a href="{{ url_for('chat.index') }}">Chat</a>
+            <a href="{{ url_for('chat.settings') }}">Ollama settings</a>
         </div>
     </nav>
 

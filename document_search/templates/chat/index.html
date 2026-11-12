@@ -5,16 +5,16 @@
 {% block content %}
 <div class="page-header">
     <h1>Chat with Local Ollama ({{ ollama_model or 'Local Model' }})</h1>
-    <p class="subtitle">Switch easily between Grounded Document Chat and Normal Direct Chat.</p>
+    <p class="subtitle">Switch easily between Ask my documents and Normal Direct Chat.</p>
 </div>
 
 <!-- Mode Switcher Tabs -->
 <div class="chat-mode-tabs">
     <a href="{{ url_for('chat.index', use_documents='1') }}" class="mode-tab {% if use_documents %}active{% endif %}">
-        📚 Grounded Document Chat
+         Ask my documents
     </a>
     <a href="{{ url_for('chat.index', use_documents='0') }}" class="mode-tab {% if not use_documents %}active{% endif %}">
-        💬 Normal Direct Chat (Ungrounded)
+         General chat
     </a>
 </div>
 
@@ -24,31 +24,31 @@
         {% if ollama_model %}
         <span>Model: <strong>{{ ollama_model }}</strong></span>
         {% else %}
-        <span class="text-danger">⚠️ No model configured in .env</span>
+        <span class="text-danger"> No model configured in .env</span>
         {% endif %}
     </div>
 
     <form method="post" action="{{ url_for('chat.index') }}" class="chat-actions-form">
         <input type="hidden" name="use_documents" value="{{ '1' if use_documents else '0' }}">
         <button type="submit" name="new_chat" value="1" class="btn btn-outline btn-sm">
-            🗑️ New Conversation
+             New chat
         </button>
     </form>
 </section>
 
 {% if use_documents %}
 <div class="flash flash-success">
-    ✓ <strong>Grounded Document Mode Active:</strong> For each question, top passages from your {{ total_passages }} indexed passages are retrieved and supplied to <code>{{ ollama_model }}</code>. Answers will cite specific source passages.
+     <strong>Grounded Document Mode Active:</strong> For each question, top passages from your {{ total_passages }} indexed passages are retrieved and supplied to <code>{{ ollama_model }}</code>. Check cited passages against the answer; citations do not guarantee accuracy.
 </div>
 {% else %}
 <div class="flash flash-info">
-    💬 <strong>Normal Direct Chat Active:</strong> You are chatting directly with <code>{{ ollama_model }}</code>. No document retrieval is performed, and answers draw from the model's general knowledge.
+     <strong>Normal Direct Chat Active:</strong> You are chatting directly with <code>{{ ollama_model }}</code>. No document retrieval is performed, and answers draw from the model's general knowledge.
 </div>
 {% endif %}
 
 {% if server_status_error %}
 <div class="flash flash-warning">
-    ⚠️ Ollama notice: {{ server_status_error }}
+     Ollama notice: {{ server_status_error }}
 </div>
 {% endif %}
 
@@ -72,14 +72,17 @@
                     <p>{{ msg.content }}</p>
                 </div>
 
+                {% if msg.context_sent %}
+                <details><summary>Context sent to the model</summary><pre>{{ msg.context_sent }}</pre></details>
+                {% endif %}
                 <!-- Grounded Sources and Citations for Assistant -->
                 {% if msg.role == 'assistant' and msg.use_documents %}
                     {% if msg.valid_citations %}
                     <div class="chat-citations">
-                        <span class="meta-label">Verified Citations:</span>
+                        <span class="meta-label">Citations matched to supplied passages:</span>
                         {% for cid, p in msg.valid_citations.items() %}
                         <a href="{{ url_for('documents.parsed', document_id=p.document_id, _anchor='passage-' ~ cid) }}" target="_blank" class="citation-chip valid">
-                            ✓ [Passage #{{ cid }}] {{ p.original_name }}
+                             [Passage #{{ cid }}] {{ p.original_name }}
                         </a>
                         {% endfor %}
                     </div>
@@ -87,10 +90,10 @@
 
                     {% if msg.unknown_citations %}
                     <div class="chat-citations">
-                        <span class="meta-label text-danger">⚠️ Unverified Citations:</span>
+                        <span class="meta-label text-danger"> Unknown passage IDs:</span>
                         {% for ucid in msg.unknown_citations %}
                         <span class="citation-chip invalid">
-                            ⚠️ [Passage #{{ ucid }}]
+                             [Passage #{{ ucid }}]
                         </span>
                         {% endfor %}
                     </div>
@@ -98,7 +101,7 @@
 
                     {% if msg.sources %}
                     <details class="chat-sources-details">
-                        <summary>📚 View {{ msg.sources|length }} retrieved passages used</summary>
+                        <summary> View {{ msg.sources|length }} retrieved passages used</summary>
                         <div class="mini-sources-list">
                             {% for s in msg.sources %}
                             <div class="mini-source-item">
@@ -130,7 +133,10 @@
     <!-- Message Input Form -->
     <form method="post" action="{{ url_for('chat.index') }}" class="chat-input-form">
         <input type="hidden" name="use_documents" value="{{ '1' if use_documents else '0' }}">
-        <input type="text" name="message"
+        {% if use_documents %}
+        <label>Retrieval <select name="retrieval_method"><option value="semantic">Semantic</option><option value="keyword">Keyword</option></select></label>
+        {% endif %}
+        <input type="text" name="message" maxlength="4000"
                placeholder="{% if use_documents %}Ask a question about your documents...{% else %}Ask anything (normal chat with {{ ollama_model }})...{% endif %}"
                class="chat-input-field" autocomplete="off" autofocus required>
         <button type="submit" class="btn btn-primary">Send</button>

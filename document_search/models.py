@@ -14,6 +14,7 @@ class Document(db.Model):
     content_hash = db.Column(db.String, nullable=False)
     file_type = db.Column(db.String, nullable=False)
     parser_used = db.Column(db.String, nullable=False, default="")
+    extracted_sections = db.Column(db.Text, nullable=True)
     extracted_text = db.Column(db.Text, nullable=False, default="")
     extraction_warnings = db.Column(db.Text, nullable=False, default="")
     status = db.Column(db.String, nullable=False, default="pending")

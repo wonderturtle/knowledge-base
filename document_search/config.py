@@ -17,14 +17,17 @@ class Config:
     SQLALCHEMY_DATABASE_URI = f"sqlite:///{os.path.join(INSTANCE_DIR, 'documents.db')}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     UPLOAD_FOLDER = os.path.join(INSTANCE_DIR, "uploads")
-    MODEL_CACHE_DIR = os.path.join(INSTANCE_DIR, "model_cache")
+    MODEL_CACHE_DIR = os.environ.get("EMBEDDING_CACHE_DIR", os.path.join(INSTANCE_DIR, "model_cache"))
+    EMBEDDING_OFFLINE = os.environ.get("EMBEDDING_OFFLINE", "0") == "1"
 
     # Classroom limits
     MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024  # 10 MiB
     MAX_PDF_PAGES = 50
+    MAX_WORKSHEETS = 50
+    MAX_WORKBOOK_CELLS = 50000
     MAX_INDEXED_PASSAGES = 500
 
-    ALLOWED_EXTENSIONS = {"pdf", "docx", "html", "txt", "md", "xlsx", "xls", "pptx", "ppt"}
+    ALLOWED_EXTENSIONS = {"pdf", "docx", "html", "htm", "txt", "md", "markdown", "xlsx", "xls", "pptx", "ppt"}
 
     # Embedding model (FastEmbed)
     EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

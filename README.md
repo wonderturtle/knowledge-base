@@ -1,253 +1,221 @@
 # Document Search & Classroom RAG Lab
 
-A lightweight local Flask application designed for a Big Data classroom exercise. Students upload their own documents, inspect extracted text, compare keyword search (SQLite FTS5) with multilingual semantic search (FastEmbed), and generate grounded answers using a local Ollama model.
+A local Flask app for uploading and inspecting documents, comparing SQLite FTS5
+keyword search with multilingual FastEmbed semantic search, and chatting with
+an on-device Ollama model. Python identifiers and the interface use English.
 
----
+## Install
 
-## Architecture & Project Structure
-
-```text
-knowledge-base/
-├── app.py                      # Flask entry point (app = create_app())
-├── requirements.txt            # Project dependencies
-├── README.md                   # Documentation, schema, and verification log
-├── schema.sql                  # Database schema definition
-├── .gitignore                  # Git ignore rules (.env, instance/, caches)
-├── .env.example                # Ollama environment configuration template
-├── .env                        # Local configuration (WSL-to-Windows host IP)
-├── document_search/
-│   ├── __init__.py             # Flask factory & SQLAlchemy init
-│   ├── config.py               # App configuration & classroom limits
-│   ├── models.py               # SQLAlchemy models (Document, Passage)
-│   ├── services.py             # Text extraction, passage splitting, search
-│   ├── ollama_client.py        # Local Ollama HTTP chat & tags client
-│   ├── blueprints/
-│   │   ├── __init__.py         # Blueprint package exports
-│   │   ├── documents.py        # /documents: list, upload, parsed view, index, delete
-│   │   ├── search.py           # /search: keyword/semantic retrieval & Ollama answer
-│   │   └── chat.py             # /chat: grounded & general chat with local model
-│   └── templates/
-│       ├── base.html           # Shared layout & navigation
-│       ├── documents/
-│       │   ├── index.html      # Document list & upload form
-│       │   └── parsed.html     # Dedicated parsed document inspection view
-│       ├── search/
-│       │   └── index.html      # Search comparison & grounded answer screen
-│       └── chat/
-│           └── index.html      # Interactive chat with document toggle
-├── static/
-│   └── style.css               # Clean, responsive plain CSS
-└── instance/                   # Local database, uploads, and model cache
-    ├── documents.db            # SQLite database with FTS5 index
-    ├── uploads/                # Stored files (UUID names)
-    └── model_cache/            # FastEmbed ONNX model cache
-```
-
----
-
-## Environment Setup inside WSL
-
-The project lives in `~/knowledge-base` while the Python virtual environment is kept in `~/venv_knowledge-base` outside the repository:
+Use Python 3.10 or newer supported by FastEmbed. The project is in
+`~/knowledge-base`; keep its virtual environment outside the repository:
 
 ```bash
-mkdir -p ~/knowledge-base
+cd ~/knowledge-base
 if [ ! -d ~/venv_knowledge-base ]; then
     python3 -m venv ~/venv_knowledge-base
 fi
 source ~/venv_knowledge-base/bin/activate
-cd ~/knowledge-base
 python -c "import sys; print(sys.executable)"
+python -m pip install -r requirements.txt
 ```
 
-Confirm that the interpreter output points to `~/venv_knowledge-base/bin/python`.
+The interpreter should be `~/venv_knowledge-base/bin/python`.
 
-Install dependencies:
+No database download, SQL import or separate database server is needed.
+**Starting the app creates `instance/documents.db`, its tables, and the FTS5
+index automatically.** Later starts preserve existing data. Uploads, the model
+cache, SQLite databases and journal files, and `.env` are ignored by Git.
+Keep `schema.sql` as a readable schema reference; the app initializes its actual
+schema through SQLAlchemy and does not require you to execute that file.
+
+## Run the app
+
 ```bash
-pip install -r requirements.txt
-```
-
-### Dependency Versions (Tested on Python 3.14.4)
-- **Flask**: 3.1.3
-- **Flask-SQLAlchemy**: 3.1.1
-- **SQLAlchemy**: 2.1.8
-- **fastembed**: 0.9.1
-- **pypdf**: 7.0.1
-- **python-docx**: 1.2.0
-- **beautifulsoup4**: 4.15.0
-- **requests**: 2.34.2
-- **python-dotenv**: 1.2.4
-
----
-
-## Configuration & Local Ollama Connection
-
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-
-Settings in `.env`:
-```ini
-# When Ollama runs on the Windows host and Flask runs inside WSL:
-OLLAMA_BASE_URL=http://172.22.224.1:11434
-OLLAMA_MODEL=ornith-1.5:9b
-```
-*(If Ollama runs natively inside Linux loopback, use `http://127.0.0.1:11434`)*.
-
----
-
-## Model Warmup & Running the Application
-
-Before class, warm the embedding model so local inference runs without network access during the lab:
-```bash
+cd ~/knowledge-base
 source ~/venv_knowledge-base/bin/activate
-cd ~/knowledge-base
-flask --app app warm-model
+python -m flask --app app run --host 0.0.0.0 --port 5001 --no-debugger --no-reload
 ```
 
-Run the development server on port 5001:
+Open **http://127.0.0.1:5001** on the server, or
+**http://YOUR_SERVER_IP:5001** from another computer on your network.
+`0.0.0.0` makes Flask listen on all network interfaces; use the server's actual
+IP address in your browser. Stop it with Ctrl+C. This is a classroom development
+server, intended for a trusted local network.
+
+To allow only this computer, replace `--host 0.0.0.0` with `--host 127.0.0.1`.
+
+## Connect Ollama
+
+1. Open **Ollama settings** in the navigation (`/chat/settings`).
+2. Enter the server address reachable **from the Flask machine**, for example
+   `http://192.168.1.10:11434`. Loopback works only if Ollama runs on the same
+   machine. A Windows/WSL address may differ from a LAN address.
+3. Click **Check server and load models**.
+4. Choose an installed on-device model and click **Save settings**.
+5. Open **Chat**, which defaults to **General chat** and needs no documents.
+
+Settings are saved in the local, Git-ignored `.env` file and apply to both
+Search and Chat immediately. Saving clears existing conversations. The app
+never installs models or changes Ollama's network configuration. Disable
+Ollama's cloud features on the server for this local-only exercise; models
+identified as remote/cloud are rejected by the settings form.
+
+Alternatively, create the environment file only if it does not already exist:
+
 ```bash
-python -m flask --app app run --host 127.0.0.1 --port 5001
+if [ ! -f .env ]; then
+    cp .env.example .env
+fi
 ```
-Open your browser at: `http://127.0.0.1:5001` (redirects to `/documents`).
 
----
+Edit `OLLAMA_BASE_URL` and `OLLAMA_MODEL`, then restart Flask. The example leaves
+the model blank deliberately: choose one actually installed on your server.
+Connection failures, a missing model, and timeouts produce visible errors.
+Parsing and keyword retrieval remain available without Ollama.
 
-## Database Schema & Models
-
-Data is managed with SQLAlchemy 2.x ORM models mapping to SQLite:
-
-### `Document` Model (`documents` table)
-- `id` (INTEGER, PK, Autoincrement)
-- `original_name` (TEXT): Original filename for display
-- `storage_name` (TEXT, UNIQUE): Generated UUID filename to prevent collisions and path injection
-- `content_hash` (TEXT): SHA-256 digest to reject duplicate uploads
-- `file_type` (TEXT): `pdf`, `docx`, `html`, or `txt`
-- `parser_used` (TEXT): e.g. `pypdf`, `python-docx`, `BeautifulSoup`, `utf-8 plain text`
-- `extracted_text` (TEXT): Persistent raw extracted text with section boundaries
-- `extraction_warnings` (TEXT): JSON array of warnings (empty pages, unreadable tables)
-- `status` (TEXT): `pending`, `indexed`, or `empty`
-- `page_count` (INTEGER): Page count for PDFs (or NULL)
-- `created_at` (DATETIME): Timestamp
-
-### `Passage` Model (`passages` table)
-- `id` (INTEGER, PK, Autoincrement)
-- `document_id` (INTEGER, FK -> `documents.id` ON DELETE CASCADE)
-- `seq` (INTEGER): Sequence number within document
-- `text` (TEXT): Clean passage text
-- `page_or_section` (TEXT): `page 1` (PDF) or `para-1`, `table-2`, `h1-1`
-- `embedding` (TEXT): JSON-serialized 384-dimensional float vector
-- `model_id` (TEXT): `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
-- `embedding_dim` (INTEGER): 384
-- `UNIQUE(document_id, seq)`
-
-### FTS5 Full-Text Search Table (`passages_fts`)
-```sql
-CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(
-    text,
-    content='passages',
-    content_rowid='id'
-);
-```
-Automatic triggers (`passages_ai`, `passages_ad`, `passages_au`) keep the FTS5 index synchronized with the `passages` table on insert, delete, and update. Foreign keys (`PRAGMA foreign_keys=ON`) ensure document deletion cascades to passages and FTS5.
-
----
-
-## Passage Sizing & Embedding Strategy
-
-- **Model**: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
-- **Supported Languages**: English, Italian, and ~50 other languages
-- **Context Limit**: 128 tokens
-- **Special Tokens**: 2 tokens (`<s>` and `</s>`)
-- **Passage Size**: Set to **100 tokens max** with **20 token overlap**
-- **Rationale**: 100 tokens guarantees passage content never exceeds the 126 available token slots. Sentences are preserved across boundaries through 20-token sliding overlap, eliminating silent tail truncation.
-
----
-
-## Classroom Limits
-- **File size**: Max 10 MiB per upload
-- **PDF page count**: Max 50 pages per PDF
-- **Passage corpus**: Max 500 total indexed passages across all documents
-
----
-
-## Checkpoint Verification Log & Observed Results
-
-### Supported Formats & Extraction
-- **PDF** (`.pdf`): 1-based page numbers preserved via `pypdf`.
-- **Word** (`.docx`): Paragraphs and table reading order preserved via `python-docx`.
-- **HTML** (`.html`): Scripts, styles, and remote links stripped via `BeautifulSoup`.
-- **Plain Text** (`.txt`): Honest `para-N` paragraph segmentation.
-- **Markdown** (`.md`): Structured section extraction preserving Markdown headers (`# Header`, `## Subheader`).
-- **Excel** (`.xlsx`, `.xls`): Tabular worksheet extraction in row-by-row format via `openpyxl`.
-- **PowerPoint** (`.pptx`, `.ppt`): Slide-by-slide text and table extraction preserving 1-based slide numbers via `python-pptx`.
-
-### Chat Modes
-- **📚 Grounded Document Chat** (`/chat?use_documents=1`): Retrieves top relevant passages from indexed documents, answers strictly with source citations (`[Passage #ID]`), and displays verified citation links to the parsed document view.
-- **💬 Normal Direct Chat** (`/chat?use_documents=0`): Conversational direct chat with the local Ollama model (`ornith-1.5:9b`) without document retrieval. Works immediately even with zero uploaded documents. Mode switcher tabs allow 1-click toggling between modes.
-- Uploaded supported formats:
-  - `.txt` (`instructor_note.txt`, `test_document.txt`): parsed with honest `para-N` markers.
-  - `.html` (`test_page.html`): parsed with `BeautifulSoup` (scripts/styles stripped, tags removed).
-  - `.docx` (`test_ml.docx`): parsed with `python-docx` (paragraphs and tables in reading order).
-  - `.pdf` (`test_db.pdf`): parsed with `pypdf` with 1-based page numbers (`page 1`).
-- Empty file (`empty.txt`): identified with "empty or contains only whitespace" warning; marked as `empty`.
-- Unsupported format (`test.jpg`): rejected with HTTP 302 and flash error message.
-- Duplicate detection: re-uploading an identical file is caught by SHA-256 hash and rejected.
-- Dedicated view `documents.parsed` (`/documents/<id>/parsed`) displays metadata, parser name, extraction warnings, scrollable extracted text, and indexing confirmation button.
-
-### Checkpoint 2: Passages and Keyword Search
-- Exact word search: Query `"superposition"` matches Passage #21 from `instructor_note.txt`.
-- Punctuation handling: Queries like `"B-tree"` and punctuation-only `"!!!???"` execute safely without FTS syntax errors.
-- Persistence: Restarting the Flask server preserved all documents, passages, and FTS5 entries.
-- Cascading delete: Deleting document #1 cleanly removed its 5 passages from SQLite and FTS5, leaving other documents searchable.
-
-### Checkpoint 3: Semantic Search
-- Produced real 384-dimensional vectors stored in SQLite.
-- FastEmbed model initialized lazily outside Flask import path.
-- Exact vs Paraphrase Comparison:
-  - Exact query `"superposition"`: found by keyword FTS5 and semantic search.
-  - Paraphrased query `"How do subatomic computing units process parallel possibilities instead of binary values"`:
-    - Keyword FTS5: **0 matches** (none of the exact words appear in the text).
-    - Semantic search: **Retrieved Passage #20 (score: 0.4067) and Passage #21 (score: 0.3995)**.
-- Plain-text copyable context box provides formatted references and passage text for downstream model use.
-
-### Checkpoint 4: Answers & Small Chat with Local Ollama
-- Reachable Ollama Server: `http://172.22.224.1:11434`
-- Tested Model: `ornith-1.5:9b` (on-device local inference)
-- Grounded Search Answer:
-  - Question: *"What are qubits and how do they differ from classical bits?"*
-  - Generated Answer: Correctly stated that qubits exist in superposition and differ from classical binary bits, citing `[Passage #21]`.
-  - Citation chip verified against supplied passages and links directly to `/documents/6/parsed#passage-21`.
-- Missing Fact Test:
-  - Question: *"What is the capital of Australia according to the documents?"*
-  - Generated Answer: Correctly reported that no evidence exists in the provided passages.
-- Interactive Chat (`/chat`):
-  - Multi-turn conversation tested with document grounding enabled (retaining context and citing `[Passage #22]`).
-  - Toggling "Use my documents" off switches to ungrounded General Chat mode and starts a fresh conversation.
-  - "New Chat" clears the server-side in-memory session.
-- Unreachable Server Test:
-  - When pointed to an invalid port (e.g. 9999), clean errors are displayed while upload, parsed view, and retrieval stay 100% operational.
-
----
-
-## How to Inspect SQLite Rows using SQLAlchemy
-
-From WSL using the external virtual environment:
+## Prepare semantic search before class
 
 ```bash
 cd ~/knowledge-base
-~/venv_knowledge-base/bin/python -c "
+source ~/venv_knowledge-base/bin/activate
+python -m flask --app app warm-model
+```
+
+The first download requires network access (roughly 220 MB). Inference then
+runs locally. Optional environment settings:
+
+```dotenv
+# Defaults to instance/model_cache; reuse an existing cache if desired.
+EMBEDDING_CACHE_DIR=/absolute/path/to/model_cache
+# Require existing model files after the first successful warmup.
+EMBEDDING_OFFLINE=1
+```
+
+Set these in `.env` or the shell before starting Flask. Model loading is lazy,
+so starting Flask or opening General chat does not download an embedding model.
+The current server on 12 November 2026 uses the already warmed cache at
+`/home/codex/document-lab-model-cache` with offline loading enabled.
+
+## Classroom workflow
+
+1. Upload a document under **Documents**. Inspect its full, escaped **Parsed
+   text** before choosing **Confirm & Index Document** (a POST action).
+2. The approved extraction and its source boundaries are persisted. Indexing
+   uses that stored extraction, rather than reparsing a possibly changed file.
+3. Inspect every stored passage and its source locator in the parsed view.
+4. Open **Search** to compare keyword and semantic results on one screen.
+5. Choose a retrieval method and **Search and ask Ollama** to request an answer.
+   If semantic search is unavailable, explicitly choose keyword retrieval.
+6. Use **General chat** for ordinary conversation, or **Ask my documents** for
+   retrieval with sources. Switching modes and **New chat** clear the history.
+
+Generated answers are separate from their sources. Source chips resolve only
+passage IDs actually supplied for that answer; unknown IDs are flagged.
+Inspect the expandable **Context sent to the model** and check whether each
+passage supports the answer. A citation does not guarantee accuracy.
+
+## Supported files and limits
+
+| Files | Local parser | Source references |
+| --- | --- | --- |
+| PDF | pypdf | 1-based page |
+| DOCX | python-docx | Paragraph or table, in document order |
+| TXT | UTF-8 text | Paragraph |
+| MD / MARKDOWN | UTF-8 text, retaining Markdown | Heading/section |
+| HTML / HTM | BeautifulSoup, excluding scripts/styles | Heading or element |
+| XLSX | openpyxl, read-only | Worksheet, row, cell addresses; formulas and available cached results |
+| XLS | xlrd | Worksheet, row, cell addresses; stored results, not formula text |
+| PPTX | python-pptx, including grouped text shapes and tables | 1-based slide |
+| PPT | Installed headless LibreOffice converts a temporary copy, then python-pptx | 1-based slide |
+
+Legacy PPT requires local LibreOffice. If it is unavailable, save the file as
+PPTX. The app does not install system software or use an online converter.
+Image-only PDFs need OCR, which is outside this lab. Charts, images, artwork,
+complex layout and table relationships may not survive text extraction.
+Formulas are never calculated, and embedded macros/scripts are not executed.
+
+Limits: 10 MiB per file; 50 PDF pages or presentation slides; 50 worksheets and
+50,000 processed cells per workbook; 500 indexed passages across the corpus.
+Over-limit or unreadable uploads produce errors. Identical bytes are rejected
+by SHA-256; generated storage names avoid filename collisions.
+
+## Storage and retrieval
+
+`Document` has an integer primary key and stores original/stored filenames,
+hash, format, persistent extraction and boundaries, warnings and status.
+`Passage` has an integer primary key, a foreign key to `Document`, sequence,
+source locator, complete passage text, optional JSON vector, model ID and
+vector dimension. A document has many passages. Deletion cascades to passages;
+SQLite triggers keep FTS5 synchronized in the same database transaction.
+
+The embedding model is
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`: 384 dimensions,
+128 input tokens including special tokens. An untruncated copy of its tokenizer
+splits source text into windows of 100 content tokens with 20-token overlap.
+Original character slices preserve text, every non-whitespace character is
+checked for coverage, and each slice is checked against the 128-token limit.
+Overlap helps continuity; it does not guarantee complete sentences. Semantic
+queries over 128 tokens are rejected with guidance to shorten them.
+
+When embeddings are unavailable, a separate character-window fallback permits
+keyword-only indexing. These passages have no vector and are marked accordingly;
+this is not semantic search. Documents already indexed without vectors must be
+deleted and uploaded/indexed again after model preparation to obtain vectors.
+
+SQLite stores vectors as JSON; Python scans compatible vectors and calculates
+exact cosine similarity. There is no approximate vector index. Cosine scores
+are similarity values, not probabilities, and are not comparable to FTS ranks.
+
+Chat history stays in server memory, separate for each browser session; cookies
+contain an identifier and mode, not document text. History is limited by turn
+count and size, with at most three recent exchanges and 4,000 history characters
+sent to Ollama. Messages are limited to 4,000 characters; generation requests
+512 output tokens. Histories clear on restart. Use one Flask process for this lab.
+
+## Verify
+
+```bash
+cd ~/knowledge-base
+source ~/venv_knowledge-base/bin/activate
+python -m pip check
+python -m flask --app app routes
+# Use a prepared cache to include real-vector checks:
+EMBEDDING_CACHE_DIR=/absolute/path/to/model_cache python -m unittest discover -s tests -v
+```
+
+Without `EMBEDDING_CACHE_DIR`, the real-vector test is explicitly skipped.
+Tests use temporary databases/uploads. Ollama transport in these automated tests
+is mocked to verify request construction and history isolation; it is not proof
+of a real model round trip.
+
+Verified here on 12 November 2026: four workflow tests passed, including actual
+384-dimensional vectors, complete long-document tail coverage, indexing the
+approved extraction after the original file changes, database reconnection,
+FTS deletion, duplicates, malformed files, upload limits, empty extraction,
+settings validation, General chat isolation, mode resets, and explicit retrieval
+selection. A real Italian query retrieved the password passage at cosine
+`0.7141523166570964`. Separate real XLS and PPT conversion/parsing checks passed
+with installed LibreOffice. The settings page was rendered and visually inspected
+in Chromium. No real Ollama answer/chat round trip has yet been verified here;
+configure a reachable server and model to finish that check.
+
+Versions used: Python 3.13.5, Flask 3.1.3, Flask-SQLAlchemy 3.1.1,
+SQLAlchemy 2.1.8, FastEmbed 0.9.1, pypdf 7.0.1, python-docx 1.2.0,
+BeautifulSoup 4.15.0, openpyxl 3.1.5, xlrd 2.0.2, python-pptx 1.0.2,
+requests 2.34.2, python-dotenv 1.2.4.
+
+Inspect stored rows without a separate SQLite client:
+
+```bash
+~/venv_knowledge-base/bin/python - <<'PY'
 from document_search import create_app, db
 from document_search.models import Document, Passage
-
 app = create_app()
 with app.app_context():
-    print('=== Documents ===')
-    for doc in Document.query.all():
-        print(f'Doc {doc.id}: {doc.original_name} [{doc.file_type}] (status: {doc.status}, passages: {len(doc.passages)}, parser: {doc.parser_used})')
-    
-    print('\n=== Sample Passages ===')
-    for p in Passage.query.limit(5).all():
-        print(f'Passage {p.id} (Doc {p.document_id}, {p.page_or_section}): {p.text[:60]}... [dim: {p.embedding_dim}]')
-"
+    for doc in db.session.scalars(db.select(Document)):
+        print(doc.id, doc.original_name, doc.status, doc.parser_used)
+    for passage in db.session.scalars(db.select(Passage).limit(5)):
+        print(passage.id, passage.document_id, passage.page_or_section,
+              passage.embedding_dim, passage.text)
+PY
 ```

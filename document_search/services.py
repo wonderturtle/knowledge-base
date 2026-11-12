@@ -7,6 +7,10 @@ import re
 import uuid
 import numpy as np
 from sqlalchemy import text
+from flask import current_app
+import shutil
+import subprocess
+import tempfile
 
 from . import db
 from .config import Config
@@ -31,7 +35,9 @@ def _get_embedding_model():
 
         _embedding_model = TextEmbedding(
             model_name=Config.EMBEDDING_MODEL,
-            cache_dir=Config.MODEL_CACHE_DIR,
+            cache_dir=current_app.config["MODEL_CACHE_DIR"],
+            local_files_only=current_app.config["EMBEDDING_OFFLINE"],
+            threads=2,
         )
         return _embedding_model
     except Exception as exc:
@@ -49,7 +55,12 @@ def get_tokenizer():
     model = _get_embedding_model()
     if model is None:
         return None
-    return model.model.tokenizer
+    # Copy: never disable truncation on the tokenizer used by inference.
+    from tokenizers import Tokenizer
+    tokenizer = Tokenizer.from_str(model.model.tokenizer.to_str())
+    tokenizer.no_truncation()
+    tokenizer.no_padding()
+    return tokenizer
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +208,9 @@ def extract_text_from_html(filepath):
     sections = {}
     idx = 1
     for elem in soup.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6",
-                                "li", "td", "th", "blockquote", "pre", "div"]):
+                                "li", "td", "th", "blockquote", "pre"]):
+        if elem.find(["p", "li", "td", "th", "blockquote", "pre"]):
+            continue
         text_content = elem.get_text(separator=" ", strip=True)
         if text_content:
             tag_name = elem.name
@@ -286,34 +299,84 @@ def extract_text_from_md(filepath):
 
 
 def extract_text_from_excel(filepath):
-    """Extract tabular text from an Excel (.xlsx / .xls) file."""
-    import openpyxl
-
-    warnings = [
-        "Note: Excel spreadsheet data is extracted in row-by-row table format. "
-        "Formulas, charts, and cell styling are flattened to plain text."
-    ]
+    """Read real XLS/XLSX parsers, preserving cells, formulas and source rows."""
+    from openpyxl.utils import get_column_letter
+    legacy = filepath.lower().endswith('.xls')
     sections = {}
-
+    warnings = ["Charts, images and formatting are not extracted. Each value includes its cell address."]
+    workbooks = []
     try:
-        wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
-        sheet_count = len(wb.sheetnames)
-        for s_idx, sheet_name in enumerate(wb.sheetnames, start=1):
-            sheet = wb[sheet_name]
-            sheet_rows = []
-            for row in sheet.iter_rows(values_only=True):
-                non_empty = [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
-                if non_empty:
-                    sheet_rows.append(" | ".join(non_empty))
-            if sheet_rows:
-                sections[f"sheet-{s_idx} ({sheet_name})"] = "\n".join(sheet_rows)
-
-        wb.close()
+        if legacy:
+            import xlrd
+            wb = xlrd.open_workbook(filepath, on_demand=True)
+            workbooks.append(wb)
+            sheets = wb.sheets()
+            warnings.append("XLS exposes stored results, not formula text; formulas are not calculated.")
+        else:
+            import openpyxl
+            wb = openpyxl.load_workbook(filepath, read_only=True, data_only=False)
+            cached = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+            workbooks.extend([wb, cached])
+            sheets = wb.worksheets
+            warnings.append("XLSX formulas and available cached results are shown; missing results are not calculated.")
+        if len(sheets) > Config.MAX_WORKSHEETS:
+            raise ValueError("Workbook exceeds 50 worksheets.")
+        processed = 0
+        for sheet in sheets:
+            rows = sheet.nrows if legacy else sheet.max_row or 0
+            cols = sheet.ncols if legacy else sheet.max_column or 0
+            processed += rows * cols
+            if processed > Config.MAX_WORKBOOK_CELLS:
+                raise ValueError("Workbook exceeds 50,000 processed cells (including empty cells in its used range).")
+            if legacy:
+                iterator = (sheet.row(r) for r in range(rows))
+                cached_rows = None
+            else:
+                iterator = sheet.iter_rows()
+                cached_rows = iter(cached[sheet.title].iter_rows())
+            for r, row in enumerate(iterator, 1):
+                cached_row = next(cached_rows) if cached_rows is not None else None
+                values = []
+                for c, cell in enumerate(row, 1):
+                    value = cell.value
+                    if legacy and cell.ctype == xlrd.XL_CELL_DATE:
+                        value = xlrd.xldate_as_datetime(value, wb.datemode).isoformat()
+                    if value is None or value == '':
+                        continue
+                    if not legacy and cell.data_type == 'f':
+                        result = cached_row[c-1].value
+                        value = f"{value} [cached result: {result if result is not None else 'unavailable'}]"
+                    values.append(f"{get_column_letter(c)}{r}: {value}")
+                if values:
+                    title = sheet.name if legacy else sheet.title
+                    sections[f"sheet {title}, row {r}, A{r}:{get_column_letter(cols)}{r}"] = " | ".join(values)
         if not sections:
             warnings.append("No readable data rows found in this spreadsheet.")
-        return sections, warnings, sheet_count
-    except Exception as exc:
-        return {}, [f"Failed to read Excel file: {exc}"], None
+        return sections, warnings, None
+    finally:
+        for book in workbooks:
+            if legacy:
+                book.release_resources()
+            else:
+                book.close()
+
+
+def extract_text_from_ppt(filepath):
+    """Convert legacy PPT locally with an isolated profile and finite timeout."""
+    converter = shutil.which('libreoffice') or shutil.which('soffice')
+    if not converter:
+        return None, ["Legacy .ppt is unavailable: LibreOffice is not installed. Save the file as .pptx."], None
+    from pathlib import Path
+    with tempfile.TemporaryDirectory(prefix='document-ppt-') as directory:
+        profile = (Path(directory) / 'profile').as_uri()
+        result = subprocess.run([converter, f'-env:UserInstallation={profile}', '--headless',
+                                 '--convert-to', 'pptx', '--outdir', directory, str(Path(filepath).resolve())],
+                                capture_output=True, text=True, timeout=60)
+        output = Path(directory) / (Path(filepath).stem + '.pptx')
+        if result.returncode != 0 or not output.is_file():
+            raise ValueError("LibreOffice could not convert this .ppt. Save it as .pptx and retry.")
+        sections, warnings, count = extract_text_from_pptx(str(output))
+        return sections, ["Original PPT converted locally with LibreOffice; original file retained."] + warnings, count
 
 
 def extract_text_from_pptx(filepath):
@@ -337,7 +400,13 @@ def extract_text_from_pptx(filepath):
 
         for s_idx, slide in enumerate(prs.slides, start=1):
             slide_texts = []
-            for shape in slide.shapes:
+            def text_shapes(shapes):
+                for shape in shapes:
+                    if hasattr(shape, 'shapes'):
+                        yield from text_shapes(shape.shapes)
+                    else:
+                        yield shape
+            for shape_idx, shape in enumerate(text_shapes(slide.shapes), 1):
                 if shape.has_text_frame:
                     for para in shape.text_frame.paragraphs:
                         text_val = para.text.strip()
@@ -350,17 +419,17 @@ def extract_text_from_pptx(filepath):
                             slide_texts.append(" | ".join(row_cells))
 
             if slide_texts:
-                sections[s_idx] = "\n".join(slide_texts)
+                sections[f"slide {s_idx}, text boxes and tables"] = "\n".join(slide_texts)
 
         if not sections:
             warnings.append("No text could be extracted from these presentation slides.")
 
         return sections, warnings, slide_count
     except Exception as exc:
-        return {}, [f"Failed to read PowerPoint presentation: {exc}"], None
+        raise ValueError(f"Failed to read PowerPoint presentation: {exc}") from exc
 
 
-def extract_text(filepath, file_type):
+def _extract_text(filepath, file_type):
     """Dispatch extraction by file type.
 
     Returns (sections_or_pages, warnings, page_count_or_none, parser_name).
@@ -374,19 +443,22 @@ def extract_text(filepath, file_type):
     elif ft == "docx":
         sections, warnings = extract_text_from_docx(filepath)
         return sections, warnings, None, "python-docx"
-    elif ft == "html":
+    elif ft in ("html", "htm"):
         sections, warnings = extract_text_from_html(filepath)
         return sections, warnings, None, "BeautifulSoup (html.parser)"
     elif ft == "txt":
         sections, warnings = extract_text_from_txt(filepath)
         return sections, warnings, None, "utf-8 plain text"
-    elif ft == "md":
+    elif ft in ("md", "markdown"):
         sections, warnings = extract_text_from_md(filepath)
         return sections, warnings, None, "markdown parser"
     elif ft in ("xlsx", "xls"):
         sections, warnings, sheet_count = extract_text_from_excel(filepath)
-        return sections, warnings, sheet_count, "openpyxl (excel)"
-    elif ft in ("pptx", "ppt"):
+        return sections, warnings, sheet_count, "xlrd" if ft == "xls" else "openpyxl"
+    elif ft == "ppt":
+        sections, warnings, count = extract_text_from_ppt(filepath)
+        return sections, warnings, count, "LibreOffice + python-pptx"
+    elif ft == "pptx":
         sections, warnings, slide_count = extract_text_from_pptx(filepath)
         if sections is None:
             return None, warnings, None, "python-pptx"
@@ -399,71 +471,57 @@ def extract_text(filepath, file_type):
 # Passage splitting
 # ---------------------------------------------------------------------------
 
-def _tokenize_text(text_input, tokenizer):
-    """Tokenize text and return list of (token_id, token_str) pairs."""
-    enc = tokenizer.encode(text_input)
-    ids = enc.ids
-    tokens = enc.tokens
-    if len(ids) >= 2 and ids[0] == 0 and ids[-1] == 2:
-        ids = ids[1:-1]
-        tokens = tokens[1:-1]
-    return ids, tokens
+def extract_text(filepath, file_type):
+    """Reject unreadable uploads without creating a misleading empty document."""
+    try:
+        return _extract_text(filepath, file_type)
+    except Exception as exc:
+        return None, [f"Cannot parse .{file_type} file: {exc}"], None, "unavailable"
+
+
+def stored_sections(doc):
+    """Use the extraction approved on screen; never reparse the upload."""
+    if doc.extracted_sections is not None:
+        return dict(json.loads(doc.extracted_sections))
+    # Compatibility with the original app's persisted preview format.
+    matches = list(re.finditer(r"^=== \[(.*?)\] ===\n", doc.extracted_text, re.MULTILINE))
+    return {m.group(1): doc.extracted_text[m.end():matches[i+1].start() if i+1 < len(matches) else None].rstrip()
+            for i, m in enumerate(matches)} or {"stored extraction": doc.extracted_text}
 
 
 def split_into_passages(sections_or_pages, file_type, tokenizer=None):
-    """Split extracted text into overlapping passages."""
-    max_tokens = Config.PASSAGE_MAX_TOKENS
-    overlap_tokens = Config.PASSAGE_OVERLAP_TOKENS
+    """Slice original characters using untruncated token offsets, retaining every tail."""
     passages = []
-    seq = 0
-
-    for key in sorted(sections_or_pages.keys(), key=_sort_key):
-        text_content = sections_or_pages[key]
-        if not text_content.strip():
+    for key, original in sections_or_pages.items():
+        if not original.strip():
             continue
-
-        if file_type == "pdf":
-            label = f"page {key}"
-        elif file_type in ("pptx", "ppt") and isinstance(key, int):
-            label = f"slide {key}"
+        label = f"page {key}" if isinstance(key, int) else str(key)
+        if tokenizer is None:
+            # Keyword-only fallback: no claim about embedding token limits.
+            spans = [(i, min(i + 400, len(original))) for i in range(0, len(original), 320)]
         else:
-            label = str(key)
-
-        if tokenizer is not None:
-            ids, tokens = _tokenize_text(text_content, tokenizer)
+            encoded = tokenizer.encode(original, add_special_tokens=False)
+            spans = []
             start = 0
-            while start < len(ids):
-                end = min(start + max_tokens, len(ids))
-                chunk_text = tokenizer.decode(ids[start:end]).strip()
-                if chunk_text:
-                    seq += 1
-                    passages.append({
-                        "text": chunk_text,
-                        "page_or_section": label,
-                        "seq": seq,
-                    })
-                if end >= len(ids):
+            while start < len(encoded.ids):
+                stop = min(start + Config.PASSAGE_MAX_TOKENS, len(encoded.ids))
+                a = encoded.offsets[start][0]
+                b = encoded.offsets[stop-1][1]
+                while len(tokenizer.encode(original[a:b]).ids) > 128 and stop > start + 1:
+                    stop -= 1
+                    b = encoded.offsets[stop-1][1]
+                spans.append((a, b))
+                if stop == len(encoded.ids):
                     break
-                start = end - overlap_tokens
-        else:
-            words = text_content.split()
-            max_words = 75
-            overlap_words = 15
-            start = 0
-            while start < len(words):
-                end = min(start + max_words, len(words))
-                chunk_text = " ".join(words[start:end]).strip()
-                if chunk_text:
-                    seq += 1
-                    passages.append({
-                        "text": chunk_text,
-                        "page_or_section": label,
-                        "seq": seq,
-                    })
-                if end >= len(words):
-                    break
-                start = end - overlap_words
-
+                start = max(start + 1, stop - Config.PASSAGE_OVERLAP_TOKENS)
+            covered = [False] * len(original)
+            for a, b in spans:
+                covered[a:b] = [True] * (b-a)
+            if not all(ch.isspace() or covered[i] for i, ch in enumerate(original)):
+                raise ValueError("Tokenizer did not cover all source text; document was not indexed.")
+        for a, b in spans:
+            if original[a:b].strip():
+                passages.append({"text": original[a:b], "page_or_section": f"{label}, chars {a}:{b}", "seq": len(passages)+1})
     return passages
 
 
@@ -485,7 +543,7 @@ def check_duplicate(content_hash):
 
 def insert_document(original_name, storage_name, content_hash,
                     file_type, extracted_text, status, page_count,
-                    parser_used="", extraction_warnings=None):
+                    parser_used="", extraction_warnings=None, sections=None):
     """Insert a document record and return its ID."""
     warnings_json = json.dumps(extraction_warnings or [])
     doc = Document(
@@ -495,6 +553,7 @@ def insert_document(original_name, storage_name, content_hash,
         file_type=file_type,
         parser_used=parser_used,
         extracted_text=extracted_text,
+        extracted_sections=json.dumps(list(sections.items()), ensure_ascii=False) if sections is not None else None,
         extraction_warnings=warnings_json,
         status=status,
         page_count=page_count,
@@ -560,7 +619,8 @@ def insert_passages(doc_id, passages, model_id=None):
             actual_model_id = Config.EMBEDDING_MODEL
             dim = Config.EMBEDDING_DIM
         except Exception as exc:
-            print(f"Warning: embedding failed: {exc}")
+            global _embedding_error
+            _embedding_error = f"Embedding failed; keyword indexing remains available: {exc}"
 
     try:
         for i, p in enumerate(passages):
@@ -579,6 +639,7 @@ def insert_passages(doc_id, passages, model_id=None):
             )
             db.session.add(passage)
 
+        db.session.get(Document, doc_id).status = "indexed"
         db.session.commit()
         return True, None
     except Exception:
@@ -600,7 +661,7 @@ def delete_document(doc_id):
         db.session.rollback()
         raise
 
-    filepath = os.path.join(Config.UPLOAD_FOLDER, storage_name)
+    filepath = os.path.join(current_app.config["UPLOAD_FOLDER"], storage_name)
     if os.path.exists(filepath):
         try:
             os.remove(filepath)
@@ -659,6 +720,9 @@ def semantic_search(query, limit=5):
         return [], None
 
     try:
+        tokenizer = get_tokenizer()
+        if len(tokenizer.encode(query).ids) > 128:
+            return None, "Semantic query exceeds the model limit of 128 tokens. Shorten it or choose keyword retrieval."
         query_emb = list(model.embed([query]))[0]
     except Exception as exc:
         return None, f"Failed to embed query: {exc}"
@@ -670,8 +734,8 @@ def semantic_search(query, limit=5):
                    d.original_name
             FROM passages p
             JOIN documents d ON d.id = p.document_id
-            WHERE p.embedding IS NOT NULL
-        """)
+            WHERE p.embedding IS NOT NULL AND p.model_id = :model_id AND p.embedding_dim = :dimension
+        """), {"model_id": Config.EMBEDDING_MODEL, "dimension": Config.EMBEDDING_DIM}
     ).mappings().all()
 
     if not rows:
@@ -683,7 +747,12 @@ def semantic_search(query, limit=5):
         return [], None
 
     for row in rows:
-        emb = np.array(json.loads(row["embedding"]))
+        try:
+            emb = np.array(json.loads(row["embedding"]), dtype=float)
+        except (ValueError, TypeError):
+            continue
+        if emb.shape != query_emb.shape or not np.isfinite(emb).all():
+            continue
         emb_norm = np.linalg.norm(emb)
         if emb_norm == 0:
             continue

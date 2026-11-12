@@ -32,7 +32,7 @@
             <span class="meta-value">
                 <span class="status status-{{ doc.status }}">{{ doc.status }}</span>
                 {% if doc.status == 'indexed' %}
-                <span class="badge badge-green">Indexing Completed ✓</span>
+                <span class="badge badge-green">Indexing Completed </span>
                 {% else %}
                 <span class="badge badge-warning">Pending Indexing</span>
                 {% endif %}
@@ -44,7 +44,7 @@
         </div>
         {% if doc.page_count %}
         <div class="meta-item">
-            <span class="meta-label">Page Count:</span>
+            <span class="meta-label">Pages / slides:</span>
             <span class="meta-value">{{ doc.page_count }}</span>
         </div>
         {% endif %}
@@ -59,7 +59,7 @@
         <h3>Extraction Warnings / Notes:</h3>
         <ul>
             {% for w in doc.warnings_list %}
-            <li>⚠️ {{ w }}</li>
+            <li> {{ w }}</li>
             {% endfor %}
         </ul>
     </div>
@@ -95,13 +95,13 @@
     </p>
     <form method="post" action="{{ url_for('documents.index_doc', document_id=doc.id) }}">
         <button type="submit" class="btn btn-primary btn-lg">
-            ⚡ Confirm &amp; Index Document
+             Confirm &amp; Index Document
         </button>
     </form>
     {% if embedding_error %}
     <p class="flash flash-warning" style="margin-top: 1rem;">
-        ⚠️ Embedding model notice: {{ embedding_error }}<br>
-        Keyword search will be ready immediately upon indexing.
+         Embedding model notice: {{ embedding_error }}<br>
+        Keyword indexing works even if embeddings are unavailable.
     </p>
     {% endif %}
 </section>
@@ -113,7 +113,7 @@
     {% if passages %}
     <p class="section-hint">
         Showing all <strong>{{ passages | length }}</strong> stored passages for this document.
-        Notice the overlap between consecutive passages to avoid splitting sentences at arbitrary boundaries.
+        Overlap repeats source text for continuity; sentences may still cross passage boundaries.
     </p>
     <div class="passages-grid">
         {% for p in passages %}
@@ -123,7 +123,7 @@
                 <span class="passage-seq">Seq: {{ p.seq }}</span>
                 <span class="passage-ref">{{ p.page_or_section }}</span>
                 {% if p.embedding %}
-                <span class="badge badge-green" title="Model: {{ p.model_id }} (dim {{ p.embedding_dim }})">Vector ({{ p.embedding_dim }}d) ✓</span>
+                <span class="badge badge-green" title="Model: {{ p.model_id }} (dim {{ p.embedding_dim }})">Vector ({{ p.embedding_dim }}d) </span>
                 {% else %}
                 <span class="badge badge-gray">No Vector</span>
                 {% endif %}

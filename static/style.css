@@ -531,3 +531,8 @@ td { font-size: 0.9rem; }
     border-top: 1px solid var(--color-border);
     margin-top: auto;
 }
+
+.settings-form { max-width: 48rem; display: grid; gap: 1rem; margin: 2rem 0; }
+.settings-form input, .settings-form select { padding: .75rem; font: inherit; width: 100%; }
+.message-body, .passage-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+details pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; }

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Ollama settings{% endblock %}
+{% block content %}
+<h1>Ollama settings</h1>
+<p>Enter the address of your local Ollama server as reachable from this machine. Check the server, then choose an installed on-device model.</p>
+{% if error %}<p class="flash flash-error">{{ error }}</p>{% endif %}
+<form method="post" class="settings-form">
+    <label for="server">Ollama server address</label>
+    <input id="server" name="server" type="url" value="{{ server }}" placeholder="http://192.168.1.10:11434" required>
+    <p>Use http://127.0.0.1:11434 only when Ollama runs on this machine. For Windows Ollama, enter its reachable network address.</p>
+    <button class="btn btn-outline" name="action" value="check">Check server and load models</button>
+    <label for="model">Installed model</label>
+    {% if models %}
+    <select id="model" name="model">
+        <option value="">Choose a model</option>
+        {% for item in models %}<option value="{{ item.name }}" {% if item.name == selected_model %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-primary" name="action" value="save">Save settings</button>
+    {% else %}
+    <input id="model" name="model" value="{{ selected_model }}" placeholder="Check the server to load its models" readonly>
+    {% endif %}
+</form>
+<p>Settings are stored in the local .env file and shared by Search and Chat. Saving clears existing conversations. Uploaded documents stay on this machine. Disable cloud features on your Ollama server for this lab.</p>
+<a class="btn btn-outline" href="{{ url_for('chat.index') }}">Open Chat</a>
+{% endblock %}

@@ -44,12 +44,12 @@
         {% if ollama_model %}
         <span>Model: <strong>{{ ollama_model }}</strong></span>
         {% else %}
-        <span class="text-danger">⚠️ No Ollama model configured in .env</span>
+        <span class="text-danger"> No Ollama model configured in .env</span>
         {% endif %}
 
         {% if server_status_error %}
         <div class="flash flash-warning" style="margin-top: 0.5rem;">
-            ⚠️ Ollama server notice: {{ server_status_error }}
+             Ollama server notice: {{ server_status_error }}
         </div>
         {% endif %}
     </div>
@@ -81,10 +81,10 @@
         <h3>Source Passage Verification</h3>
         {% if valid_citations %}
         <div class="citations-list">
-            <span class="citation-label">Verified Citations:</span>
+            <span class="citation-label">Citations matched to supplied passages:</span>
             {% for cid, p in valid_citations.items() %}
             <a href="{{ url_for('documents.parsed', document_id=p.document_id, _anchor='passage-' ~ cid) }}" class="citation-chip valid">
-                ✓ [Passage #{{ cid }}] {{ p.original_name }} ({{ p.page_or_section }})
+                 [Passage #{{ cid }}] {{ p.original_name }} ({{ p.page_or_section }})
             </a>
             {% endfor %}
         </div>
@@ -92,10 +92,10 @@
 
         {% if unknown_citations %}
         <div class="citations-list">
-            <span class="citation-label text-danger">⚠️ Unverified / Hallucinated Passage IDs:</span>
+            <span class="citation-label text-danger"> Unverified / Hallucinated Passage IDs:</span>
             {% for ucid in unknown_citations %}
             <span class="citation-chip invalid">
-                ⚠️ [Passage #{{ ucid }}] (Not among the supplied passages)
+                 [Passage #{{ ucid }}] (Not among the supplied passages)
             </span>
             {% endfor %}
         </div>
@@ -109,7 +109,7 @@
     <!-- Expandable Prompt Context -->
     {% if context_sent %}
     <details class="context-details">
-        <summary>🔍 View exact context and prompt sent to Ollama</summary>
+        <summary> View exact context and prompt sent to Ollama</summary>
         <pre class="prompt-preview">{{ context_sent }}</pre>
     </details>
     {% endif %}
@@ -160,7 +160,7 @@
 
         {% if semantic_error %}
         <div class="flash flash-warning">
-            ⚠️ Semantic search unavailable: {{ semantic_error }}
+             Semantic search unavailable: {{ semantic_error }}
         </div>
         {% elif semantic_results %}
         {% for r in semantic_results %}
