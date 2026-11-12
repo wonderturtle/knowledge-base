@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Document Search &amp; Classroom Retrieval{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="{{ url_for('documents.index') }}" class="nav-brand">📚 Document Search &amp; RAG Lab</a>
+        <div class="nav-links">
+            <a href="{{ url_for('documents.index') }}">Documents</a>
+            <a href="{{ url_for('search.index') }}">Search</a>
+            <a href="{{ url_for('chat.index') }}">Chat</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>Big Data Classroom Exercise &mdash; Document Search, Semantic Retrieval &amp; Local Ollama Chat</p>
+    </footer>
+</body>
+</html>

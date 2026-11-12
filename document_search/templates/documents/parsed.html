@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Parsed – {{ doc.original_name }}{% endblock %}
+
+{% block content %}
+<div class="navigation-bar">
+    <a href="{{ url_for('documents.index') }}" class="btn btn-outline">← Back to Documents</a>
+    <a href="{{ url_for('search.index') }}" class="btn btn-outline">Go to Search →</a>
+</div>
+
+<div class="page-header">
+    <h1>Parsed Document: {{ doc.original_name }}</h1>
+</div>
+
+<section class="doc-metadata-card">
+    <h2>Document Metadata</h2>
+    <div class="metadata-grid">
+        <div class="meta-item">
+            <span class="meta-label">Original Filename:</span>
+            <span class="meta-value"><strong>{{ doc.original_name }}</strong></span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Format:</span>
+            <span class="meta-value"><code>.{{ doc.file_type }}</code></span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Parser Used:</span>
+            <span class="meta-value"><code>{{ doc.parser_used or 'default' }}</code></span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Status:</span>
+            <span class="meta-value">
+                <span class="status status-{{ doc.status }}">{{ doc.status }}</span>
+                {% if doc.status == 'indexed' %}
+                <span class="badge badge-green">Indexing Completed ✓</span>
+                {% else %}
+                <span class="badge badge-warning">Pending Indexing</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Content SHA-256:</span>
+            <span class="meta-value"><code title="{{ doc.content_hash }}">{{ doc.content_hash[:16] }}…</code></span>
+        </div>
+        {% if doc.page_count %}
+        <div class="meta-item">
+            <span class="meta-label">Page Count:</span>
+            <span class="meta-value">{{ doc.page_count }}</span>
+        </div>
+        {% endif %}
+        <div class="meta-item">
+            <span class="meta-label">Uploaded At:</span>
+            <span class="meta-value">{{ doc.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if doc.created_at else '' }}</span>
+        </div>
+    </div>
+
+    {% if doc.warnings_list %}
+    <div class="warnings-box">
+        <h3>Extraction Warnings / Notes:</h3>
+        <ul>
+            {% for w in doc.warnings_list %}
+            <li>⚠️ {{ w }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</section>
+
+<!-- Parsed Text Section -->
+<section class="parsed-text-section">
+    <h2>Parsed Text (Inspection View)</h2>
+    <p class="section-hint">
+        This is the actual text extracted by <code>{{ doc.parser_used or 'parser' }}</code>.
+        Preserves PDF page numbers (starting at 1) or honest section/paragraph references.
+        Line breaks and content are displayed verbatim with HTML escaping.
+    </p>
+
+    {% if doc.extracted_text %}
+    <div class="scrollable-text-container">
+        <pre class="extracted-text-content">{{ doc.extracted_text }}</pre>
+    </div>
+    {% else %}
+    <p class="empty-state">No text was extracted from this file (file may be empty or an image-only PDF requiring OCR).</p>
+    {% endif %}
+</section>
+
+<!-- Indexing Action -->
+{% if doc.status == 'pending' and doc.extracted_text %}
+<section class="index-action-card">
+    <h2>Confirm Indexing</h2>
+    <p>
+        Review the extracted text above. Confirming will split this text into overlapping passages
+        (max ~100 tokens with ~20 token overlap, sized for <code>sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2</code>)
+        and compute embeddings.
+    </p>
+    <form method="post" action="{{ url_for('documents.index_doc', document_id=doc.id) }}">
+        <button type="submit" class="btn btn-primary btn-lg">
+            ⚡ Confirm &amp; Index Document
+        </button>
+    </form>
+    {% if embedding_error %}
+    <p class="flash flash-warning" style="margin-top: 1rem;">
+        ⚠️ Embedding model notice: {{ embedding_error }}<br>
+        Keyword search will be ready immediately upon indexing.
+    </p>
+    {% endif %}
+</section>
+{% endif %}
+
+<!-- Stored Passages Section -->
+<section class="passages-section">
+    <h2>Indexed Passages</h2>
+    {% if passages %}
+    <p class="section-hint">
+        Showing all <strong>{{ passages | length }}</strong> stored passages for this document.
+        Notice the overlap between consecutive passages to avoid splitting sentences at arbitrary boundaries.
+    </p>
+    <div class="passages-grid">
+        {% for p in passages %}
+        <div class="passage-card" id="passage-{{ p.id }}">
+            <div class="passage-header">
+                <span class="passage-tag">Passage #{{ p.id }}</span>
+                <span class="passage-seq">Seq: {{ p.seq }}</span>
+                <span class="passage-ref">{{ p.page_or_section }}</span>
+                {% if p.embedding %}
+                <span class="badge badge-green" title="Model: {{ p.model_id }} (dim {{ p.embedding_dim }})">Vector ({{ p.embedding_dim }}d) ✓</span>
+                {% else %}
+                <span class="badge badge-gray">No Vector</span>
+                {% endif %}
+            </div>
+            <div class="passage-body">
+                <p>{{ p.text }}</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">
+        No passages have been indexed yet for this document.
+        {% if doc.status == 'pending' and doc.extracted_text %}
+        Click "Confirm &amp; Index Document" above to create passages.
+        {% endif %}
+    </p>
+    {% endif %}
+</section>
+
+<div class="bottom-actions">
+    <a href="{{ url_for('documents.index') }}" class="btn btn-outline">← Back to Documents</a>
+    <a href="{{ url_for('search.index') }}" class="btn btn-primary">Go to Search →</a>
+</div>
+{% endblock %}

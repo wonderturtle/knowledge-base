@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Documents – Document Search{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Uploaded Documents</h1>
+    <p class="subtitle">Upload classroom documents, inspect extracted text, and index them for search.</p>
+</div>
+
+<section class="upload-section">
+    <h2>Upload a Document</h2>
+    <form method="post" action="{{ url_for('documents.upload') }}" enctype="multipart/form-data" class="upload-form">
+        <label for="file-input" class="file-label">
+            Choose file (.pdf, .docx, .html, .txt, .md, .xlsx, .pptx &mdash; max 10 MiB, 50 pages/slides):
+        </label>
+        <div class="upload-inputs">
+            <input type="file" name="file" id="file-input" accept=".pdf,.docx,.html,.txt,.md,.xlsx,.xls,.pptx,.ppt" required>
+            <button type="submit" class="btn btn-primary">Upload &amp; Inspect</button>
+        </div>
+    </form>
+</section>
+
+<section class="status-bar">
+    <div class="status-metric">
+        Total indexed passages: <strong>{{ total_passages }}</strong> / {{ max_passages }}
+    </div>
+</section>
+
+{% if documents %}
+<section class="document-list">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Filename</th>
+                <th>Format</th>
+                <th>Status</th>
+                <th>Pages</th>
+                <th>Uploaded</th>
+                <th>Inspection &amp; Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for doc in documents %}
+            <tr>
+                <td>{{ doc.id }}</td>
+                <td>
+                    <strong>{{ doc.original_name }}</strong>
+                </td>
+                <td><code>.{{ doc.file_type }}</code></td>
+                <td>
+                    <span class="status status-{{ doc.status }}">{{ doc.status }}</span>
+                </td>
+                <td>{{ doc.page_count if doc.page_count else '—' }}</td>
+                <td>{{ doc.created_at.strftime('%Y-%m-%d %H:%M') if doc.created_at else '' }}</td>
+                <td class="action-cell">
+                    <a href="{{ url_for('documents.parsed', document_id=doc.id) }}" class="btn btn-sm btn-outline">
+                        🔍 View parsed text
+                    </a>
+                    <form method="post" action="{{ url_for('documents.delete_doc', document_id=doc.id) }}"
+                          onsubmit="return confirm('Delete this document and all its passages?');"
+                          style="display:inline;">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% else %}
+<p class="empty-state">No documents uploaded yet. Use the form above to upload a PDF, DOCX, HTML, or TXT file.</p>
+{% endif %}
+{% endblock %}

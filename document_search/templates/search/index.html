@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}Search &amp; Grounded Retrieval{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Document Search &amp; Grounded Answers</h1>
+    <p class="subtitle">Compare keyword matching (FTS5) with multilingual semantic retrieval, and test local Ollama grounding.</p>
+</div>
+
+<section class="search-box-card">
+    <form method="post" action="{{ url_for('search.index') }}" class="search-form-grid">
+        <div class="form-row">
+            <input type="text" name="q" value="{{ query }}" placeholder="Ask a question or enter keywords (e.g. 'How does photosynthesis work?')..." class="search-main-input" autofocus required>
+        </div>
+
+        <div class="form-controls">
+            <div class="retrieval-selector">
+                <label><strong>Retrieval for Ollama Answer:</strong></label>
+                <label class="radio-label">
+                    <input type="radio" name="retrieval_method" value="semantic" {% if retrieval_method == 'semantic' %}checked{% endif %}>
+                    Semantic (FastEmbed)
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="retrieval_method" value="keyword" {% if retrieval_method == 'keyword' %}checked{% endif %}>
+                    Keyword (FTS5)
+                </label>
+            </div>
+
+            <div class="button-group">
+                <button type="submit" name="action" value="search_only" formaction="{{ url_for('search.index') }}" formmethod="get" class="btn btn-outline">
+                    🔎 Compare Retrieval Only
+                </button>
+                <button type="submit" name="action" value="ask_ollama" class="btn btn-primary">
+                    🤖 Search &amp; Ask Ollama
+                </button>
+            </div>
+        </div>
+    </form>
+
+    <div class="server-status-bar">
+        <span>Indexed corpus: <strong>{{ total_passages }}</strong> passages</span> &bull;
+        <span>Ollama Server: <code>{{ ollama_base_url }}</code></span> &bull;
+        {% if ollama_model %}
+        <span>Model: <strong>{{ ollama_model }}</strong></span>
+        {% else %}
+        <span class="text-danger">⚠️ No Ollama model configured in .env</span>
+        {% endif %}
+
+        {% if server_status_error %}
+        <div class="flash flash-warning" style="margin-top: 0.5rem;">
+            ⚠️ Ollama server notice: {{ server_status_error }}
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+{% if query %}
+
+<!-- Ollama Answer Section (if generated) -->
+{% if ollama_answer or ollama_error %}
+<section class="answer-card">
+    <h2>🤖 Local Ollama Grounded Answer</h2>
+    <div class="answer-meta">
+        <span>Model: <strong>{{ ollama_model }}</strong></span> &bull;
+        <span>Grounded via: <strong>{{ retrieval_method|capitalize }} retrieval</strong></span> &bull;
+        <span>Passages sent: <strong>{{ retrieved_for_model|length }}</strong></span>
+    </div>
+
+    {% if ollama_error %}
+    <div class="flash flash-error">
+        {{ ollama_error }}
+    </div>
+    {% else %}
+    <div class="answer-content">
+        <p class="answer-text">{{ ollama_answer }}</p>
+    </div>
+
+    <!-- Citation Verification -->
+    <div class="citations-panel">
+        <h3>Source Passage Verification</h3>
+        {% if valid_citations %}
+        <div class="citations-list">
+            <span class="citation-label">Verified Citations:</span>
+            {% for cid, p in valid_citations.items() %}
+            <a href="{{ url_for('documents.parsed', document_id=p.document_id, _anchor='passage-' ~ cid) }}" class="citation-chip valid">
+                ✓ [Passage #{{ cid }}] {{ p.original_name }} ({{ p.page_or_section }})
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if unknown_citations %}
+        <div class="citations-list">
+            <span class="citation-label text-danger">⚠️ Unverified / Hallucinated Passage IDs:</span>
+            {% for ucid in unknown_citations %}
+            <span class="citation-chip invalid">
+                ⚠️ [Passage #{{ ucid }}] (Not among the supplied passages)
+            </span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if not valid_citations and not unknown_citations %}
+        <p class="text-muted">The model did not include explicit [Passage #ID] citation tags in its response.</p>
+        {% endif %}
+    </div>
+
+    <!-- Expandable Prompt Context -->
+    {% if context_sent %}
+    <details class="context-details">
+        <summary>🔍 View exact context and prompt sent to Ollama</summary>
+        <pre class="prompt-preview">{{ context_sent }}</pre>
+    </details>
+    {% endif %}
+
+    {% endif %}
+</section>
+{% endif %}
+
+<!-- Comparison Grid: Keyword vs Semantic -->
+<h2>Retrieval Comparison</h2>
+<div class="comparison-grid">
+    <!-- Keyword Column -->
+    <div class="comparison-col">
+        <div class="col-header">
+            <h3>Keyword Search (SQLite FTS5)</h3>
+            <span class="badge badge-gray">{{ keyword_results|length }} matches</span>
+        </div>
+        <p class="col-desc">
+            Matches exact tokens and stems using BM25 relevance scoring. Punctuation is stripped safely.
+        </p>
+
+        {% if keyword_results %}
+        {% for r in keyword_results %}
+        <div class="result-card">
+            <div class="result-header">
+                <span class="result-doc">📄 {{ r.original_name }}</span>
+                <a href="{{ url_for('documents.parsed', document_id=r.document_id, _anchor='passage-' ~ r.passage_id) }}" class="result-ref-link">
+                    Passage #{{ r.passage_id }} ({{ r.page_or_section }}) ↗
+                </a>
+            </div>
+            <p class="result-text">{{ r.text }}</p>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="empty-state">No keyword matches found for this query.</p>
+        {% endif %}
+    </div>
+
+    <!-- Semantic Column -->
+    <div class="comparison-col">
+        <div class="col-header">
+            <h3>Semantic Search (FastEmbed)</h3>
+            <span class="badge badge-green">{{ semantic_results|length }} results</span>
+        </div>
+        <p class="col-desc">
+            Computes exact cosine similarity against stored 384-d vectors using <code>sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2</code>.
+        </p>
+
+        {% if semantic_error %}
+        <div class="flash flash-warning">
+            ⚠️ Semantic search unavailable: {{ semantic_error }}
+        </div>
+        {% elif semantic_results %}
+        {% for r in semantic_results %}
+        <div class="result-card">
+            <div class="result-header">
+                <span class="result-doc">📄 {{ r.original_name }}</span>
+                <a href="{{ url_for('documents.parsed', document_id=r.document_id, _anchor='passage-' ~ r.passage_id) }}" class="result-ref-link">
+                    Passage #{{ r.passage_id }} ({{ r.page_or_section }}) ↗
+                </a>
+            </div>
+            <div class="similarity-score">
+                cosine similarity: <code>{{ "%.4f"|format(r.similarity) }}</code>
+            </div>
+            <p class="result-text">{{ r.text }}</p>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="empty-state">No passages available for semantic matching.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Copyable Context Box -->
+{% if context_box %}
+<section class="context-box-section">
+    <div class="context-box-header">
+        <h3>📋 Copyable Retrieval Context</h3>
+        <button class="btn btn-sm btn-outline" onclick="copyContext()">Copy to Clipboard</button>
+    </div>
+    <p class="section-hint">
+        Use this plain-text block as grounded input for external evaluation or coding agents (Pi/local models).
+    </p>
+    <textarea id="copyable-context" readonly rows="12" class="context-textarea">{{ context_box }}</textarea>
+</section>
+
+<script>
+function copyContext() {
+    const el = document.getElementById('copyable-context');
+    el.select();
+    navigator.clipboard.writeText(el.value).then(() => {
+        alert('Context copied to clipboard!');
+    });
+}
+</script>
+{% endif %}
+
+{% endif %}
+{% endblock %}
